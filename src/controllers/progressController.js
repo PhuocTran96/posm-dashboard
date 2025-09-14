@@ -32,27 +32,7 @@ function normalizeModel(model) {
     .replace(/\s+/g, ''); // Remove spaces
 }
 
-function fuzzyMatch(str1, str2, threshold = 0.8) {
-  if (!str1 || !str2) {
-    return 0;
-  }
-
-  const s1 = normalizeString(str1);
-  const s2 = normalizeString(str2);
-
-  if (s1 === s2) {
-    return 1;
-  }
-
-  // Jaccard similarity for fuzzy matching
-  const words1 = new Set(s1.split(' '));
-  const words2 = new Set(s2.split(' '));
-
-  const intersection = new Set([...words1].filter((x) => words2.has(x)));
-  const union = new Set([...words1, ...words2]);
-
-  return intersection.size / union.size;
-}
+// Removed fuzzy matching function - now using exact matching only
 
 function isStoreMatch(
   surveyStoreId,
@@ -66,7 +46,7 @@ function isStoreMatch(
   const shopName = normalizeString(surveyShopName);
 
   if (debug) {
-    console.log(`🔍 Store Match Debug:`, {
+    console.log(`🔍 Store Match Debug (EXACT MATCH ONLY):`, {
       displayStoreId,
       surveyStoreId,
       surveyShopName,
@@ -74,88 +54,31 @@ function isStoreMatch(
     });
   }
 
-  // Method 0: EXACT store name match (highest priority)
+  // EXACT MATCH ONLY: Direct ID match (most reliable)
+  if (surveyId === displayId) {
+    if (debug) {
+      console.log(`✅ EXACT Match: Direct ID match`);
+    }
+    return true;
+  }
+
+  // EXACT MATCH ONLY: Exact store name match using store mapping
   if (storeMap && displayId) {
     const storeInfo = storeMap[displayId];
     if (storeInfo && storeInfo.store_name) {
       const storeName = normalizeString(storeInfo.store_name);
       if (shopName === storeName) {
         if (debug) {
-          console.log(`✅ Method 0 Match: EXACT store name match (highest priority)`);
-        }
-        return true; // Exact match gets highest priority
-      }
-    }
-  }
-
-  // Method 1: Direct ID match (if survey somehow has store ID)
-  if (surveyId === displayId) {
-    if (debug) {
-      console.log(`✅ Method 1 Match: Direct ID match`);
-    }
-    return true;
-  }
-
-  // Method 2: Use store mapping for partial matches (lower priority than exact)
-  if (storeMap && displayId) {
-    const storeInfo = storeMap[displayId];
-    if (storeInfo && storeInfo.store_name) {
-      const storeName = normalizeString(storeInfo.store_name);
-
-      if (debug) {
-        console.log(`🔍 Method 2 Check:`, {
-          storeInfo,
-          storeName,
-          shopName,
-          shopIncludesStore: shopName && storeName && shopName.includes(storeName),
-          storeIncludesShop: shopName && storeName && storeName.includes(shopName),
-        });
-      }
-
-      // Check partial matches (lower confidence than exact)
-      if (shopName && storeName && shopName.includes(storeName)) {
-        if (debug) {
-          console.log(`✅ Method 2 Match: Shop name includes store name`);
-        }
-        return true;
-      }
-      if (shopName && storeName && storeName.includes(shopName)) {
-        if (debug) {
-          console.log(`✅ Method 2 Match: Store name includes shop name`);
+          console.log(`✅ EXACT Match: Store name exact match`);
         }
         return true;
       }
     }
   }
 
-  // Method 3: Check if shop name contains store ID directly (fallback)
-  if (shopName && displayId && shopName.includes(displayId.toLowerCase())) {
-    if (debug) {
-      console.log(`✅ Method 3 Match: Shop name contains display ID`);
-    }
-    return true;
-  }
-  if (shopName && surveyId && shopName.includes(surveyId.toLowerCase())) {
-    if (debug) {
-      console.log(`✅ Method 3 Match: Shop name contains survey ID`);
-    }
-    return true;
-  }
-
-  // Method 4: Fuzzy matching with shop name words
-  if (displayId && shopName) {
-    const shopWords = shopName.split(' ').filter((word) => word.length > 2);
-    const hasWordMatch = shopWords.some((word) => displayId.toLowerCase().includes(word));
-    if (hasWordMatch) {
-      if (debug) {
-        console.log(`✅ Method 4 Match: Fuzzy word match`);
-      }
-      return true;
-    }
-  }
-
+  // No fuzzy matching - only exact matches allowed
   if (debug) {
-    console.log(`❌ No match found`);
+    console.log(`❌ No exact match found`);
   }
   return false;
 }
@@ -168,18 +91,8 @@ function isModelMatch(displayModel, surveyModel) {
   const display = normalizeModel(displayModel);
   const survey = normalizeModel(surveyModel);
 
-  // Exact match after normalization
-  if (display === survey) {
-    return true;
-  }
-
-  // One contains the other (fuzzy)
-  if (display.includes(survey) || survey.includes(display)) {
-    return true;
-  }
-
-  // Fuzzy match with high threshold
-  return fuzzyMatch(displayModel, surveyModel, 0.8) >= 0.8;
+  // EXACT MATCH ONLY: Only exact match after normalization
+  return display === survey;
 }
 
 /**
@@ -1244,6 +1157,15 @@ async function calculateStoreProgressImproved(
 
       // Use POSM-based status calculation
       const posmBasedStatus = getStorePosmStatus(store.completedPOSMs, store.totalRequiredPOSMs);
+
+      // Debug logging for stores with high completion but no surveys
+      if (posmCompletionRate > 0 && store.completedPOSMs === 0) {
+        console.log(`🚨 ISSUE: Store ${store.storeId} shows ${posmCompletionRate}% completion but has 0 completed POSMs`);
+        console.log(`  - totalRequiredPOSMs: ${store.totalRequiredPOSMs}`);
+        console.log(`  - completedPOSMs: ${store.completedPOSMs}`);
+        console.log(`  - verifiedDisplays: ${store.verifiedDisplays}`);
+        console.log(`  - matchingDebug:`, store.matchingDebug);
+      }
 
       return {
         ...store,

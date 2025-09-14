@@ -1,86 +1,13 @@
 class ProgressDashboard {
   constructor() {
-    this.user = null;
     this.refreshInterval = null;
     this.init();
   }
 
   async init() {
-    // Check authentication first
-    const isAuthenticated = await this.checkAuthentication();
-    if (!isAuthenticated) {
-      return; // User will be redirected to login
-    }
-
     this.bindEvents();
     this.loadAllData();
     this.startAutoRefresh();
-    this.initNavigation();
-  }
-
-  async checkAuthentication() {
-    const token = localStorage.getItem('accessToken');
-    const user = localStorage.getItem('user');
-
-    if (!token || !user) {
-      this.redirectToAdminLogin('No access token or user data found');
-      return false;
-    }
-
-    try {
-      const userData = JSON.parse(user);
-      console.log('Progress Dashboard: Checking auth for user:', userData.username, userData.role);
-
-      // Check if user is admin
-      if (userData.role !== 'admin') {
-        alert('Access denied: Admin privileges required');
-        localStorage.clear();
-        window.location.replace('/login.html');
-        return false;
-      }
-
-      // Verify token is still valid
-      const response = await fetch('/api/auth/verify', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (response.ok) {
-        this.user = userData;
-        return true;
-      } else {
-        // Token invalid, clear storage
-        localStorage.clear();
-        this.redirectToAdminLogin('Session expired or invalid');
-        return false;
-      }
-    } catch (error) {
-      console.error('Authentication check failed:', error);
-      localStorage.clear();
-      this.redirectToAdminLogin('Session expired or invalid');
-      return false;
-    }
-  }
-
-  redirectToAdminLogin(reason) {
-    console.log('Redirecting to admin login:', reason);
-    if (!window.location.pathname.includes('admin-login.html')) {
-      window.location.replace('/admin-login.html');
-    }
-  }
-
-  initNavigation() {
-    // Mobile navigation toggle
-    const navToggle = document.getElementById('navMobileToggle');
-    const navMenu = document.querySelector('.nav-menu');
-
-    if (navToggle && navMenu) {
-      navToggle.addEventListener('click', () => {
-        navToggle.classList.toggle('active');
-        navMenu.classList.toggle('active');
-      });
-    }
   }
 
   bindEvents() {
@@ -127,7 +54,7 @@ class ProgressDashboard {
       if (stores) this.renderStoreProgress(stores);
       if (models) this.renderModelProgress(models);
       if (posms) this.renderPOSMProgress(posms);
-      
+
       // Mount React POSM Matrix component
       this.mountPOSMMatrix();
 
@@ -146,32 +73,17 @@ class ProgressDashboard {
     }
   }
 
-  async makeAuthenticatedRequest(url, options = {}) {
-    const token = localStorage.getItem('accessToken');
-    if (!token) {
-      this.redirectToAdminLogin('No access token');
-      return null;
-    }
-
-    const authOptions = {
+  async makeRequest(url, options = {}) {
+    const requestOptions = {
       ...options,
       headers: {
         ...options.headers,
-        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
     };
 
     try {
-      const response = await fetch(url, authOptions);
-
-      // If unauthorized, clear tokens and redirect
-      if (response.status === 401) {
-        localStorage.clear();
-        this.redirectToAdminLogin('Session expired');
-        return null;
-      }
-
+      const response = await fetch(url, requestOptions);
       return response;
     } catch (error) {
       console.error('API request failed:', error);
@@ -181,7 +93,7 @@ class ProgressDashboard {
 
   async loadOverviewData() {
     try {
-      const response = await this.makeAuthenticatedRequest('/api/progress/overview');
+      const response = await this.makeRequest('/api/progress/overview');
       if (response && response.ok) {
         const result = await response.json();
         return result.data.overview;
@@ -194,7 +106,7 @@ class ProgressDashboard {
 
   async loadStoreProgress() {
     try {
-      const response = await this.makeAuthenticatedRequest('/api/progress/stores?limit=10');
+      const response = await this.makeRequest('/api/progress/stores?limit=10');
       if (response && response.ok) {
         const result = await response.json();
         return result.data;
@@ -207,7 +119,7 @@ class ProgressDashboard {
 
   async loadModelProgress() {
     try {
-      const response = await this.makeAuthenticatedRequest('/api/progress/models');
+      const response = await this.makeRequest('/api/progress/models');
       if (response && response.ok) {
         const result = await response.json();
         return result.data;
@@ -220,7 +132,7 @@ class ProgressDashboard {
 
   async loadPOSMProgress() {
     try {
-      const response = await this.makeAuthenticatedRequest('/api/progress/posm-types');
+      const response = await this.makeRequest('/api/progress/posm-types');
       if (response && response.ok) {
         const result = await response.json();
         return result.data;
@@ -230,7 +142,6 @@ class ProgressDashboard {
       return null;
     }
   }
-
 
   renderOverviewStats(data) {
     const container = document.getElementById('overviewStats');
@@ -249,22 +160,22 @@ class ProgressDashboard {
           <div class="stat-number">${mockData.totalStores}</div>
           <div class="stat-label">Total stores</div>
         </div>
-        
+
         <div class="stat-card">
           <div class="stat-number">${mockData.storesWithPOSM}</div>
           <div class="stat-label">Stores with complet POSM</div>
         </div>
-        
+
         <div class="stat-card">
           <div class="stat-number">${mockData.totalModels}</div>
           <div class="stat-label">Total models</div>
         </div>
-        
+
         <div class="stat-card">
           <div class="stat-number">${mockData.totalPOSM}</div>
           <div class="stat-label">Total POSM</div>
         </div>
-        
+
         <div class="stat-card completion-card">
           <div class="circular-progress" style="--progress: ${mockData.overallCompletion * 3.6}deg;">
             <div class="percentage">${mockData.overallCompletion}%</div>
@@ -282,22 +193,22 @@ class ProgressDashboard {
         <div class="stat-number">${data.totalStores || 0}</div>
         <div class="stat-label">Total stores</div>
       </div>
-      
+
       <div class="stat-card">
         <div class="stat-number">${data.storesWithCompletPOSM || 0}</div>
         <div class="stat-label">Stores with complet POSM</div>
       </div>
-      
+
       <div class="stat-card">
         <div class="stat-number">${data.totalModels || 0}</div>
         <div class="stat-label">Total models</div>
       </div>
-      
+
       <div class="stat-card">
         <div class="stat-number">${data.totalPOSM || 0}</div>
         <div class="stat-label">Total POSM</div>
       </div>
-      
+
       <div class="stat-card completion-card">
         <div class="circular-progress" style="--progress: ${overallCompletion * 3.6}deg;">
           <div class="percentage">${overallCompletion}%</div>
@@ -478,7 +389,7 @@ class ProgressDashboard {
     try {
       // Clear container first
       container.innerHTML = '';
-      
+
       // Mount the React component
       const root = ReactDOM.createRoot ? ReactDOM.createRoot(container) : null;
       if (root) {
@@ -488,7 +399,7 @@ class ProgressDashboard {
         // React 17 render API fallback
         ReactDOM.render(React.createElement(POSMMatrix.default), container);
       }
-      
+
       console.log('POSM Matrix component mounted successfully');
     } catch (error) {
       console.error('Error mounting POSM Matrix component:', error);

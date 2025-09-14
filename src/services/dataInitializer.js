@@ -10,6 +10,12 @@ const loadStoresData = async () => {
       return;
     }
 
+    // Check if CSV file exists
+    if (!fs.existsSync('stores.csv')) {
+      console.log('⚠️  stores.csv not found, skipping store data initialization');
+      return;
+    }
+
     const stores = [];
 
     return new Promise((resolve, reject) => {
@@ -58,6 +64,12 @@ const loadModelPosmData = async () => {
     const existingRecords = await ModelPosm.countDocuments();
     if (existingRecords > 0) {
       console.log(`✅ Model/POSM data already loaded (${existingRecords} records)`);
+      return;
+    }
+
+    // Check if CSV file exists
+    if (!fs.existsSync('posm.csv')) {
+      console.log('⚠️  posm.csv not found, skipping model/POSM data initialization');
       return;
     }
 
