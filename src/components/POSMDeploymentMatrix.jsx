@@ -249,7 +249,7 @@ const POSMDeploymentMatrix = () => {
 
       {/* Summary Stats */}
       {summary && (
-        <div className="grid grid-cols-4 sm:grid-cols-2 gap-3 mb-4">
+        <div className="grid grid-cols-4 gap-3 mb-4">
           <div className="bg-white p-3 rounded-lg shadow-sm border">
             <div className="text-2xl font-bold text-gray-900">{summary.totalStores}</div>
             <div className="text-sm text-gray-600">Total Stores</div>
