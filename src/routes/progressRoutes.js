@@ -1,11 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const progressController = require('../controllers/progressController');
-const { verifyToken, requireAdmin } = require('../middleware/auth');
 
-// All progress routes require admin authentication
-router.use(verifyToken);
-router.use(requireAdmin);
 
 /**
  * @route GET /api/progress/overview
