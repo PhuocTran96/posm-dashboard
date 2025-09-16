@@ -3,8 +3,7 @@ const MiniCssExtractPlugin = require('mini-css-extract-plugin');
 
 module.exports = {
   entry: {
-    'posm-matrix': './src/components/POSMDeploymentMatrix.jsx',
-    'styles': './src/styles/tailwind.css'
+    'posm-matrix': './src/components/POSMDeploymentMatrix.jsx'
   },
   output: {
     filename: '[name].bundle.js',
@@ -29,9 +28,7 @@ module.exports = {
       {
         test: /\.css$/,
         use: [
-          process.env.NODE_ENV === 'production' 
-            ? MiniCssExtractPlugin.loader 
-            : 'style-loader',
+          MiniCssExtractPlugin.loader,
           'css-loader',
           'postcss-loader'
         ]
@@ -40,7 +37,7 @@ module.exports = {
   },
   plugins: [
     new MiniCssExtractPlugin({
-      filename: '[name].css'
+      filename: 'styles.bundle.css'
     })
   ],
   resolve: {

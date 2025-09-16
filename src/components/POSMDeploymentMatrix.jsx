@@ -3,6 +3,7 @@ import { AgGridReact } from 'ag-grid-react';
 import StatusCellRenderer from './StatusCellRenderer';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
+import '../styles/tailwind.css';
 
 const POSMDeploymentMatrix = () => {
   const [gridApi, setGridApi] = useState(null);
@@ -64,17 +65,13 @@ const POSMDeploymentMatrix = () => {
     fetchMatrixData();
   }, [fetchMatrixData]);
 
-  // Search handler with debouncing
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (searchText !== '') {
-        fetchMatrixData(1, pagination.limit, searchText);
-      } else {
-        fetchMatrixData(1, pagination.limit, '');
-      }
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
+  // Manual search handler - no auto-refresh
+  const handleSearch = useCallback(() => {
+    if (searchText !== '') {
+      fetchMatrixData(1, pagination.limit, searchText);
+    } else {
+      fetchMatrixData(1, pagination.limit, '');
+    }
   }, [searchText, pagination.limit, fetchMatrixData]);
 
   // Column definitions
@@ -161,12 +158,134 @@ const POSMDeploymentMatrix = () => {
     fetchMatrixData(1, newLimit, searchText);
   };
 
-  // Export handler
+  // Export handler - current page only
   const handleExport = () => {
     if (gridApi) {
       gridApi.exportDataAsCsv({
-        fileName: `posm-matrix-${new Date().toISOString().split('T')[0]}.csv`
+        fileName: `posm-matrix-current-page-${new Date().toISOString().split('T')[0]}.csv`,
+        processCellCallback: (params) => {
+          const colDef = params.column.getColDef();
+          const value = params.value;
+
+          // Handle model status columns (dynamic columns with StatusCellRenderer)
+          if (colDef.cellRenderer === StatusCellRenderer && value && typeof value === 'object') {
+            const { completed, required, status } = value;
+            if (status === 'not_applicable') return '–';
+            if (status === 'complete') return 'Done';
+            return `${completed}/${required}`;
+          }
+
+          // Handle completion rate column
+          if (colDef.field === 'completionRate') {
+            return `${value}%`;
+          }
+
+          // Handle any other valueFormatter
+          if (colDef.valueFormatter) {
+            return colDef.valueFormatter({
+              value: value,
+              data: params.node.data,
+              node: params.node,
+              column: params.column,
+              api: params.api
+            });
+          }
+
+          return value;
+        }
       });
+    }
+  };
+
+  // Export handler - full dataset
+  const handleExportAll = async () => {
+    try {
+      setLoading(true);
+
+      // Fetch all data without pagination and without search filter
+      const queryParams = new URLSearchParams({
+        page: '1',
+        limit: '999999', // Large number to get all records
+        search: '', // Empty search to get all data
+        export: 'true' // Special flag to bypass server-side limit
+      });
+
+      const response = await fetch(`/api/progress/posm-matrix?${queryParams}`, {
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (result.success) {
+        // Create a temporary grid to export all data
+        const allData = result.data.matrix;
+
+        // Convert data to CSV format
+        const processValue = (value, field) => {
+          if (field.startsWith('posmStatus.') && value && typeof value === 'object') {
+            const { completed, required, status } = value;
+            if (status === 'not_applicable') return '–';
+            if (status === 'complete') return 'Done';
+            return `${completed}/${required}`;
+          }
+
+          if (field === 'completionRate') {
+            return `${value}%`;
+          }
+
+          return value;
+        };
+
+        // Generate CSV content
+        const headers = [
+          'Store',
+          'Region',
+          'Channel',
+          'Models',
+          'Completion',
+          ...models
+        ];
+
+        const csvContent = [
+          headers.join(','),
+          ...allData.map(row => [
+            `"${row.storeName}"`,
+            `"${row.region}"`,
+            `"${row.channel}"`,
+            row.totalModels,
+            `${row.completionRate}%`,
+            ...models.map(model => {
+              const value = row.posmStatus?.[model];
+              return `"${processValue(value, `posmStatus.${model}`)}"`;
+            })
+          ].join(','))
+        ].join('\n');
+
+        // Download CSV
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `posm-matrix-full-${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+      } else {
+        throw new Error(result.message || 'Failed to fetch full matrix data');
+      }
+    } catch (error) {
+      console.error('Error exporting full data:', error);
+      setError(error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -208,15 +327,28 @@ const POSMDeploymentMatrix = () => {
       {/* Header Controls */}
       <div className="flex justify-between items-center mb-4">
         <div className="flex items-center space-x-4">
-          <div className="relative">
-            <div className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 z-10 pointer-events-none flex items-center justify-center">🔍</div>
-            <input
-              type="text"
-              placeholder="Search stores..."
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full"
-            />
+          <div className="flex items-center space-x-2">
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 z-10 pointer-events-none flex items-center justify-center">🔍</div>
+              <input
+                type="text"
+                placeholder="Search stores..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    handleSearch();
+                  }
+                }}
+                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <button
+              onClick={handleSearch}
+              className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-2 rounded-lg text-sm font-medium"
+            >
+              Search
+            </button>
           </div>
           
           <select
@@ -232,11 +364,20 @@ const POSMDeploymentMatrix = () => {
         </div>
 
         <div className="flex items-center space-x-2">
+          <div className="relative">
+            <button
+              onClick={handleExport}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            >
+              Export Current Page
+            </button>
+          </div>
           <button
-            onClick={handleExport}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            onClick={handleExportAll}
+            disabled={loading}
+            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm font-medium"
           >
-            Export CSV
+            {loading ? 'Exporting...' : 'Export All Data'}
           </button>
           <button
             onClick={() => fetchMatrixData(pagination.currentPage, pagination.limit, searchText)}

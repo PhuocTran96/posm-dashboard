@@ -738,7 +738,10 @@ const getProgressTimeline = async (req, res) => {
 const getPOSMMatrix = async (req, res) => {
   try {
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const isExport = req.query.export === 'true';
+    const limit = isExport
+      ? Math.max(1, parseInt(req.query.limit) || 999999)
+      : Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const skip = (page - 1) * limit;
     const search = req.query.search || '';
     const sortBy = req.query.sortBy || 'storeName';

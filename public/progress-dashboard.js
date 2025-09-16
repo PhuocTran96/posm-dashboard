@@ -42,16 +42,14 @@ class ProgressDashboard {
 
     try {
       // Load all data in parallel for better performance
-      const [overview, stores, models, posms] = await Promise.all([
+      const [overview, models, posms] = await Promise.all([
         this.loadOverviewData(),
-        this.loadStoreProgress(),
         this.loadModelProgress(),
         this.loadPOSMProgress(),
       ]);
 
       // Render all sections
       if (overview) this.renderOverviewStats(overview);
-      if (stores) this.renderStoreProgress(stores);
       if (models) this.renderModelProgress(models);
       if (posms) this.renderPOSMProgress(posms);
 
@@ -104,18 +102,6 @@ class ProgressDashboard {
     }
   }
 
-  async loadStoreProgress() {
-    try {
-      const response = await this.makeRequest('/api/progress/stores?limit=10');
-      if (response && response.ok) {
-        const result = await response.json();
-        return result.data;
-      }
-    } catch (error) {
-      console.error('Error loading store progress:', error);
-      return null;
-    }
-  }
 
   async loadModelProgress() {
     try {
@@ -218,59 +204,6 @@ class ProgressDashboard {
     `;
   }
 
-  renderStoreProgress(stores) {
-    const container = document.getElementById('storeProgressContent');
-    if (!container) return;
-
-    if (!stores || stores.length === 0) {
-      // Render mock data for demonstration
-      const mockStores = [
-        { name: 'Store A', status: 'Complete', models: 5, posm: 20, completion: 100 },
-        { name: 'Store B', status: 'Partially complete', models: 3, posm: 12, completion: 60 },
-        { name: 'Store C', status: 'Not deployed', models: 4, posm: 16, completion: 0 },
-      ];
-
-      const html = mockStores
-        .map(
-          (store) => `
-        <tr>
-          <td><strong>${store.name}</strong></td>
-          <td>
-            <span class="status-badge ${this.getStatusClassNew(store.status)}">${store.status}</span>
-          </td>
-          <td>${store.models}</td>
-          <td>${store.posm}</td>
-          <td><strong>${store.completion}%</strong></td>
-        </tr>
-      `
-        )
-        .join('');
-
-      container.innerHTML = html;
-      return;
-    }
-
-    const html = stores
-      .map((store) => {
-        const statusClass = this.getStatusClass(store.status);
-        const statusText = this.getStatusText(store.status);
-
-        return `
-        <tr>
-          <td><strong>${this.escapeHtml(store.storeName)}</strong></td>
-          <td>
-            <span class="status-badge ${statusClass}">${statusText}</span>
-          </td>
-          <td>${store.modelCount || store.models?.length || 0}</td>
-          <td>${store.totalRequiredPOSMs || store.totalDisplays || 0}</td>
-          <td><strong>${store.completionRate}%</strong></td>
-        </tr>
-      `;
-      })
-      .join('');
-
-    container.innerHTML = html;
-  }
 
   renderModelProgress(models) {
     const container = document.getElementById('modelProgressContent');

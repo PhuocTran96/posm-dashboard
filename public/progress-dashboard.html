@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>POSM Deployment Progress - Dashboard</title>
     <link rel="stylesheet" href="styles-admin.css" />
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="dist/styles.bundle.css" />
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <style>
@@ -526,31 +526,8 @@
 
       <!-- Dashboard Sections -->
       <div class="dashboard-sections">
-        <!-- Stores Section -->
-        <div class="section-card">
-          <div class="section-header">
-            <div class="section-title">Stores</div>
-          </div>
-          <div class="section-content">
-            <table class="data-table" id="storesTable">
-              <thead>
-                <tr>
-                  <th>Store</th>
-                  <th>Status</th>
-                  <th>Models</th>
-                  <th>POSM</th>
-                  <th>Completion</th>
-                </tr>
-              </thead>
-              <tbody id="storeProgressContent">
-                <!-- Store progress will be loaded here -->
-              </tbody>
-            </table>
-          </div>
-        </div>
-
         <!-- Models & POSMs Section -->
-        <div class="section-card">
+        <div class="section-card" style="grid-column: 1 / -1;">
           <div class="section-header">
             <div class="section-title">Models & POSMs</div>
           </div>
