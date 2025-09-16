@@ -24,10 +24,6 @@ const POSMDeploymentMatrix = () => {
   const fetchMatrixData = useCallback(async (page = 1, limit = 20, search = '') => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('accessToken');
-      if (!token) {
-        throw new Error('No authentication token');
-      }
 
       const queryParams = new URLSearchParams({
         page: page.toString(),
@@ -37,7 +33,6 @@ const POSMDeploymentMatrix = () => {
 
       const response = await fetch(`/api/progress/posm-matrix?${queryParams}`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
