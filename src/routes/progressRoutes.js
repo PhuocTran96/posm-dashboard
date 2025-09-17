@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const progressController = require('../controllers/progressController');
 
-
 /**
  * @route GET /api/progress/overview
  * @desc Get overall progress overview statistics

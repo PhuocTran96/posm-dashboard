@@ -11,7 +11,7 @@ const verifyToken = async (req, res, next) => {
     userid: 'dashboard',
     username: 'Progress Dashboard',
     role: 'admin',
-    isActive: true
+    isActive: true,
   };
 
   next();

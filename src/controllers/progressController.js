@@ -141,29 +141,23 @@ function getLatestSurveyPerStore(surveys) {
 // Debug functionality removed - system analysis completed and working correctly
 
 /**
- * Get POSM count for each model from ModelPosm collection
+ * Get POSM data for each model from ModelPosm collection
  */
-async function getModelPosmCounts() {
+async function getModelPosmData() {
   try {
     const modelPosms = await ModelPosm.find().select('model posm').lean();
-    const modelPosmCounts = {};
+    const modelPosmData = {};
 
     modelPosms.forEach((mp) => {
-      if (!modelPosmCounts[mp.model]) {
-        modelPosmCounts[mp.model] = new Set();
+      if (!modelPosmData[mp.model]) {
+        modelPosmData[mp.model] = new Set();
       }
-      modelPosmCounts[mp.model].add(mp.posm);
+      modelPosmData[mp.model].add(mp.posm);
     });
 
-    // Convert Sets to counts
-    Object.keys(modelPosmCounts).forEach((model) => {
-      modelPosmCounts[model] = modelPosmCounts[model].size;
-    });
-
-    console.log('Model POSM Counts:', modelPosmCounts);
-    return modelPosmCounts;
+    return modelPosmData;
   } catch (error) {
-    console.error('Error getting model POSM counts:', error);
+    console.error('Error getting model POSM data:', error);
     return {};
   }
 }
@@ -181,28 +175,28 @@ const getProgressOverview = async (req, res) => {
     const allModelsInDisplay = await Display.distinct('model');
     const totalModels = allModelsInDisplay.length;
 
-    // 3. Get POSM counts for each model
-    const modelPosmCounts = await getModelPosmCounts();
+    // 3. Get POSM data for each model
+    const modelPosmData = await getModelPosmData();
 
     // 4. Calculate Total POSM from all displays and their required POSMs
     const allDisplays = await Display.find({ is_displayed: true }).select('store_id model').lean();
     let totalPOSM = 0;
     allDisplays.forEach((display) => {
-      totalPOSM += modelPosmCounts[display.model] || 0;
+      totalPOSM += modelPosmData[display.model]?.size || 0;
     });
 
     // 5. Calculate Stores with Complete POSM using new completion logic
     const allSurveys = await SurveyResponse.find()
       .select('leader shopName responses createdAt submittedAt')
       .lean();
-    const stores = await Store.find().select('store_id store_name region province channel').lean();
+    const stores = await Store.find().select('store_id store_name region province channel leader TDS').lean();
 
     // Use the improved POSM-based calculation
     const storeProgress = await calculateStoreProgressImproved(
       allDisplays,
       allSurveys,
       stores,
-      modelPosmCounts
+      modelPosmData
     );
     const storesWithCompletPOSM = storeProgress.filter(
       (store) => store.completionRate === 100
@@ -259,21 +253,21 @@ const getStoreProgress = async (req, res) => {
     const allSurveys = await SurveyResponse.find()
       .select('leader shopName responses createdAt submittedAt')
       .lean();
-    const stores = await Store.find().select('store_id store_name region province channel').lean();
+    const stores = await Store.find().select('store_id store_name region province channel leader TDS').lean();
 
-    // Get POSM counts for each model
-    const modelPosmCounts = await getModelPosmCounts();
+    // Get POSM data for each model
+    const modelPosmData = await getModelPosmData();
 
     // Apply latest records filtering
     const recentDisplays = getLatestRecords(allDisplays, 'updatedAt', 90);
     // const latestSurveyPerStore = getLatestSurveyPerStore(allSurveys); // Flawed logic
 
-    // Calculate store progress using improved matching, passing all surveys and POSM counts
+    // Calculate store progress using improved matching, passing all surveys and POSM data
     const storeProgress = await calculateStoreProgressImproved(
       recentDisplays,
       allSurveys,
       stores,
-      modelPosmCounts
+      modelPosmData
     );
 
     // Apply pagination
@@ -434,124 +428,105 @@ const getModelProgress = async (req, res) => {
 };
 
 /**
- * Get progress by POSM types
+ * Get progress by POSM types - Optimized with MongoDB Aggregation
  */
 const getPOSMProgress = async (req, res) => {
   try {
-    // Get all displays with models and stores
-    const allDisplays = await Display.find({ is_displayed: true }).select('store_id model').lean();
-    const allSurveys = await SurveyResponse.find()
-      .select('leader shopName responses createdAt submittedAt')
-      .lean();
-    const allStores = await Store.find().select('store_id store_name').lean();
+    // Pipeline 1: Calculate totalRequired for each POSM Type
+    const requiredPipeline = [
+      // 1. Filter for only active displays
+      { $match: { is_displayed: true } },
 
-    // Get current models from displays (models that are actually deployed)
-    const currentModels = [...new Set(allDisplays.map((d) => d.model))];
+      // 2. Join with the ModelPosm collection to get the POSM details for each model
+      {
+        $lookup: {
+          from: 'modelposms',
+          localField: 'model',
+          foreignField: 'model',
+          as: 'posmDetails',
+        },
+      },
 
-    // Get all POSM types relevant to current models
-    const relevantModelPosms = await ModelPosm.find({
-      model: { $in: currentModels },
-    })
-      .select('model posm posmName')
-      .lean();
+      // 3. Deconstruct the posmDetails array to create a document for each POSM
+      { $unwind: '$posmDetails' },
 
-    // Create store mapping
-    const storeMap = {};
-    allStores.forEach((store) => {
-      storeMap[store.store_id] = store;
+      // 4. Group by the POSM code and count the occurrences
+      {
+        $group: {
+          _id: '$posmDetails.posm',
+          totalRequired: { $sum: 1 },
+        },
+      },
+
+      // 5. Project to a more friendly format
+      {
+        $project: {
+          _id: 0,
+          posmType: '$_id',
+          totalRequired: '$totalRequired',
+        },
+      },
+    ];
+
+    // Pipeline 2: Calculate totalCompleted for each POSM Type
+    const completedPipeline = [
+      // 1. Deconstruct the responses array
+      { $unwind: '$responses' },
+
+      // 2. Deconstruct the posmSelections array
+      { $unwind: '$responses.posmSelections' },
+
+      // 3. Filter for only the POSMs that were marked as selected
+      { $match: { 'responses.posmSelections.selected': true } },
+
+      // 4. Group by the POSM code and count the occurrences
+      {
+        $group: {
+          _id: '$responses.posmSelections.posmCode',
+          totalCompleted: { $sum: 1 },
+        },
+      },
+
+      // 5. Project to a more friendly format
+      {
+        $project: {
+          _id: 0,
+          posmType: '$_id',
+          totalCompleted: '$totalCompleted',
+        },
+      },
+    ];
+
+    // Execute both aggregation pipelines in parallel
+    const [requiredResults, completedResults] = await Promise.all([
+      Display.aggregate(requiredPipeline),
+      SurveyResponse.aggregate(completedPipeline),
+    ]);
+
+    // Create a map of completed counts for efficient lookup
+    const completedMap = new Map();
+    completedResults.forEach((item) => {
+      completedMap.set(item.posmType, item.totalCompleted);
     });
 
-    // Group POSM data by POSM type
-    const posmStats = {};
+    // Map over the required results and merge the completed counts
+    const posmProgress = requiredResults.map((req) => {
+      const totalCompleted = completedMap.get(req.posmType) || 0;
+      const completionRate =
+        req.totalRequired > 0
+          ? parseFloat(((totalCompleted / req.totalRequired) * 100).toFixed(1))
+          : 0;
 
-    relevantModelPosms.forEach((mp) => {
-      if (!posmStats[mp.posm]) {
-        posmStats[mp.posm] = {
-          posmType: mp.posm,
-          posmName: mp.posmName,
-          models: new Set(),
-          storesWithModelAndPosm: new Set(), // Column 2: stores with model displays AND this POSM
-          storesWithPosmInSurvey: new Set(), // Column 3: stores with this POSM in survey results
-          totalRequired: 0,
-          totalCompleted: 0,
-        };
-      }
-      posmStats[mp.posm].models.add(mp.model);
+      return {
+        type: req.posmType,
+        requiredStores: req.totalRequired,
+        completedStores: totalCompleted,
+        completion: completionRate,
+      };
     });
 
-    // Calculate Column 2: Count stores that have displayed models AND have this POSM
-    allDisplays.forEach((display) => {
-      // For each POSM type
-      Object.keys(posmStats).forEach((posmType) => {
-        const stat = posmStats[posmType];
-
-        // If this display's model is associated with this POSM type
-        if (stat.models.has(display.model)) {
-          stat.storesWithModelAndPosm.add(display.store_id);
-          stat.totalRequired++;
-        }
-      });
-    });
-
-    // Calculate Column 3 & 4: Survey completion data using storesTable approach
-    allDisplays.forEach((display) => {
-      // Find all matching surveys for this store
-      const allMatchingSurveysForStore = allSurveys.filter((survey) =>
-        isStoreMatch(survey.leader, survey.shopName, display.store_id, storeMap)
-      );
-
-      if (allMatchingSurveysForStore.length > 0) {
-        // Get latest survey for this store
-        const latestSurveyForStore = allMatchingSurveysForStore.sort(
-          (a, b) => new Date(b.createdAt || b.submittedAt) - new Date(a.createdAt || a.submittedAt)
-        )[0];
-
-        // Find matching survey response for this display model
-        const matchingResponse =
-          latestSurveyForStore.responses &&
-          latestSurveyForStore.responses.find((response) =>
-            isModelMatch(display.model, response.model)
-          );
-
-        if (
-          matchingResponse &&
-          matchingResponse.posmSelections &&
-          Array.isArray(matchingResponse.posmSelections)
-        ) {
-          // Check each POSM selection for this specific model-store combination
-          matchingResponse.posmSelections.forEach((posmSelection) => {
-            // FIX: Use posmSelection.posmCode instead of posmSelection.type
-            if (posmSelection.selected && posmStats[posmSelection.posmCode]) {
-              // Add this store to the POSM completion count (only once per store-model-posm combination)
-              posmStats[posmSelection.posmCode].storesWithPosmInSurvey.add(display.store_id);
-            }
-          });
-        }
-      }
-    });
-
-    // Convert to array and calculate completion percentages (Column 4)
-    const posmProgress = Object.values(posmStats)
-      .map((stat) => {
-        const storesWithModelAndPosmCount = stat.storesWithModelAndPosm.size;
-        const storesWithPosmInSurveyCount = stat.storesWithPosmInSurvey.size;
-
-        // Completion percentage: (stores with POSM in survey) / (stores with model displays that require this POSM)
-        const completionRate =
-          storesWithModelAndPosmCount > 0
-            ? parseFloat(
-                ((storesWithPosmInSurveyCount / storesWithModelAndPosmCount) * 100).toFixed(1)
-              )
-            : 0;
-
-        return {
-          type: stat.posmType, // Column 1: POSM Type
-          requiredStores: storesWithModelAndPosmCount, // Column 2: Required Stores
-          completedStores: storesWithPosmInSurveyCount, // Column 3: Completed Stores
-          completion: completionRate, // Column 4: Completion percentage
-        };
-      })
-      .sort((a, b) => b.completion - a.completion);
+    // Sort the final results
+    posmProgress.sort((a, b) => b.completion - a.completion);
 
     res.json({
       success: true,
@@ -571,79 +546,65 @@ const getPOSMProgress = async (req, res) => {
  */
 const getRegionProgress = async (req, res) => {
   try {
-    // Get latest records with improved filtering
+    // Get all necessary data
     const allDisplays = await Display.find({ is_displayed: true })
       .select('store_id model createdAt updatedAt')
       .lean();
     const allSurveys = await SurveyResponse.find()
       .select('leader shopName responses createdAt submittedAt')
       .lean();
-    const stores = await Store.find().select('store_id region province channel').lean();
+    const stores = await Store.find().select('store_id store_name region province channel leader TDS').lean();
+    const modelPosmData = await getModelPosmData();
 
-    const recentDisplays = getLatestRecords(allDisplays, 'updatedAt', 90);
-    const latestSurveyPerStore = getLatestSurveyPerStore(allSurveys);
+    // Calculate store progress using the improved, cumulative logic
+    const storeProgress = await calculateStoreProgressImproved(
+      allDisplays,
+      allSurveys,
+      stores,
+      modelPosmData
+    );
 
-    // Create store lookup map
-    const storeMap = {};
-    stores.forEach((store) => {
-      storeMap[store.store_id] = store;
-    });
-
-    // Group by region
+    // Group store progress by region
     const regionStats = {};
 
-    recentDisplays.forEach((display) => {
-      const store = storeMap[display.store_id];
-      if (!store) {
-        return;
-      } // Skip if store info not found
-
-      const region = store.region;
+    storeProgress.forEach((store) => {
+      const region = store.region || 'Unknown';
 
       if (!regionStats[region]) {
         regionStats[region] = {
           region,
-          totalDisplays: 0,
-          verifiedDisplays: 0,
-          stores: new Set(),
+          totalStores: 0,
+          totalRequiredPOSMs: 0,
+          completedPOSMs: 0,
           provinces: new Set(),
         };
       }
 
-      regionStats[region].totalDisplays++;
-      regionStats[region].stores.add(display.store_id);
-      regionStats[region].provinces.add(store.province);
-
-      // Check verification using improved matching
-      const matchingSurveys = latestSurveyPerStore.filter((survey) =>
-        isStoreMatch(survey.leader, survey.shopName, display.store_id, storeMap)
-      );
-
-      const hasModelInSurvey = matchingSurveys.some((survey) => {
-        if (!survey.responses) {
-          return false;
-        }
-        return survey.responses.some((response) => isModelMatch(display.model, response.model));
-      });
-
-      if (hasModelInSurvey) {
-        regionStats[region].verifiedDisplays++;
+      regionStats[region].totalStores++;
+      regionStats[region].totalRequiredPOSMs += store.totalRequiredPOSMs;
+      regionStats[region].completedPOSMs += store.completedPOSMs;
+      if (store.province) {
+        regionStats[region].provinces.add(store.province);
       }
     });
 
-    // Convert to array and calculate rates
+    // Convert to array and calculate final completion rates
     const regionProgress = Object.values(regionStats)
-      .map((region) => ({
-        ...region,
-        storeCount: region.stores.size,
-        provinceCount: region.provinces.size,
-        completionRate:
-          region.totalDisplays > 0
-            ? ((region.verifiedDisplays / region.totalDisplays) * 100).toFixed(1)
-            : 0,
-        stores: Array.from(region.stores),
-        provinces: Array.from(region.provinces),
-      }))
+      .map((region) => {
+        const completionRate =
+          region.totalRequiredPOSMs > 0
+            ? parseFloat(((region.completedPOSMs / region.totalRequiredPOSMs) * 100).toFixed(1))
+            : 0;
+
+        return {
+          region: region.region,
+          storeCount: region.totalStores,
+          provinceCount: region.provinces.size,
+          completionRate,
+          totalRequiredPOSMs: region.totalRequiredPOSMs,
+          completedPOSMs: region.completedPOSMs,
+        };
+      })
       .sort((a, b) => b.completionRate - a.completionRate);
 
     res.json({
@@ -754,17 +715,17 @@ const getPOSMMatrix = async (req, res) => {
     const allSurveys = await SurveyResponse.find()
       .select('leader shopName responses createdAt submittedAt')
       .lean();
-    const stores = await Store.find().select('store_id store_name region province channel').lean();
+    const stores = await Store.find().select('store_id store_name region province channel leader TDS').lean();
 
-    // Get POSM counts for each model
-    const modelPosmCounts = await getModelPosmCounts();
+    // Get POSM data for each model
+    const modelPosmData = await getModelPosmData();
 
     // Calculate store progress using existing improved logic
     const storeProgress = await calculateStoreProgressImproved(
       allDisplays,
       allSurveys,
       stores,
-      modelPosmCounts
+      modelPosmData
     );
 
     // Get all unique models from displays
@@ -778,6 +739,8 @@ const getPOSMMatrix = async (req, res) => {
         region: store.region,
         province: store.province,
         channel: store.channel,
+        leader: store.leader,
+        TDS: store.TDS,
         totalModels: store.models.length,
         completionRate: store.completionRate,
         status: store.status,
@@ -791,6 +754,9 @@ const getPOSMMatrix = async (req, res) => {
           const modelDetails = store.posmCompletionDetails[model];
           if (modelDetails) {
             const status = getMatrixCellStatus(modelDetails.completed, modelDetails.required);
+            const notCompletedPosms = modelDetails.requiredPosms.filter(
+              (p) => !modelDetails.completedPosms.includes(p)
+            );
             row.posmStatus[model] = {
               completed: modelDetails.completed,
               required: modelDetails.required,
@@ -799,6 +765,10 @@ const getPOSMMatrix = async (req, res) => {
                 modelDetails.required > 0
                   ? Math.round((modelDetails.completed / modelDetails.required) * 100)
                   : 0,
+              posmDetails: {
+                completed: modelDetails.completedPosms,
+                notCompleted: notCompletedPosms,
+              },
             };
           } else {
             // Model exists but no POSM details
@@ -990,7 +960,7 @@ async function calculateStoreProgressImproved(
   displays,
   surveys,
   stores = [],
-  modelPosmCounts = {}
+  modelPosmData = {}
 ) {
   // Validate and clean surveys first to prevent corrupt data
   const validatedSurveys = validateAndCleanSurveys(surveys);
@@ -1019,6 +989,8 @@ async function calculateStoreProgressImproved(
         region: storeInfo?.region || 'Unknown',
         province: storeInfo?.province || 'Unknown',
         channel: storeInfo?.channel || 'Unknown',
+        leader: storeInfo?.leader || 'Unknown',
+        TDS: storeInfo?.TDS || 'Unknown',
         totalDisplays: 0,
         verifiedDisplays: 0,
         models: new Set(),
@@ -1035,7 +1007,8 @@ async function calculateStoreProgressImproved(
     storeStats[display.store_id].models.add(display.model);
 
     // Calculate required POSMs for this model
-    const posmCount = modelPosmCounts[display.model] || 0;
+    const requiredPosms = modelPosmData[display.model] || new Set();
+    const posmCount = requiredPosms.size;
     storeStats[display.store_id].totalRequiredPOSMs += posmCount;
 
     // Initialize POSM completion tracking for this model
@@ -1043,6 +1016,8 @@ async function calculateStoreProgressImproved(
       storeStats[display.store_id].posmCompletionDetails[display.model] = {
         required: posmCount,
         completed: 0,
+        requiredPosms: Array.from(requiredPosms),
+        completedPosms: [],
       };
     }
   });
@@ -1121,6 +1096,8 @@ async function calculateStoreProgressImproved(
         if (storeStats[display.store_id].posmCompletionDetails[display.model]) {
           storeStats[display.store_id].posmCompletionDetails[display.model].completed =
             completedPosmCount;
+          storeStats[display.store_id].posmCompletionDetails[display.model].completedPosms =
+            Array.from(completedPosmSet);
         }
 
         // Update last survey date
@@ -1163,7 +1140,9 @@ async function calculateStoreProgressImproved(
 
       // Debug logging for stores with high completion but no surveys
       if (posmCompletionRate > 0 && store.completedPOSMs === 0) {
-        console.log(`🚨 ISSUE: Store ${store.storeId} shows ${posmCompletionRate}% completion but has 0 completed POSMs`);
+        console.log(
+          `🚨 ISSUE: Store ${store.storeId} shows ${posmCompletionRate}% completion but has 0 completed POSMs`
+        );
         console.log(`  - totalRequiredPOSMs: ${store.totalRequiredPOSMs}`);
         console.log(`  - completedPOSMs: ${store.completedPOSMs}`);
         console.log(`  - verifiedDisplays: ${store.verifiedDisplays}`);
@@ -1206,6 +1185,8 @@ async function calculateStoreProgress(displays, surveys, stores = []) {
         region: storeInfo?.region || 'Unknown',
         province: storeInfo?.province || 'Unknown',
         channel: storeInfo?.channel || 'Unknown',
+        leader: storeInfo?.leader || 'Unknown',
+        TDS: storeInfo?.TDS || 'Unknown',
         totalDisplays: 0,
         verifiedDisplays: 0,
         models: new Set(),

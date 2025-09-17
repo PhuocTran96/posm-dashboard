@@ -101,6 +101,20 @@ const POSMDeploymentMatrix = () => {
         floatingFilter: true,
       },
       {
+        headerName: 'Leader',
+        field: 'leader',
+        width: 120,
+        filter: 'agTextColumnFilter',
+        floatingFilter: true,
+      },
+      {
+        headerName: 'TDS',
+        field: 'TDS',
+        width: 120,
+        filter: 'agTextColumnFilter',
+        floatingFilter: true,
+      },
+      {
         headerName: 'Models',
         field: 'totalModels',
         width: 80,
@@ -130,7 +144,27 @@ const POSMDeploymentMatrix = () => {
       cellRenderer: StatusCellRenderer,
       sortable: false,
       filter: false,
-      cellStyle: { padding: '4px' }
+      cellStyle: { padding: '4px' },
+      tooltipValueGetter: (params) => {
+        const value = params.value;
+        if (!value || value.status === 'complete' || value.status === 'not_applicable') {
+          return null;
+        }
+        if (value.posmDetails) {
+          const completed = value.posmDetails.completed.join(', ');
+          const notCompleted = value.posmDetails.notCompleted.join(', ');
+          let tooltip = '';
+          if (value.posmDetails.completed.length > 0) {
+            tooltip += `Done: ${completed}`;
+          }
+          if (value.posmDetails.notCompleted.length > 0) {
+            if (tooltip) tooltip += '\n';
+            tooltip += `Not Done: ${notCompleted}`;
+          }
+          return tooltip;
+        }
+        return null;
+      },
     }));
 
     return [...fixedColumns, ...modelColumns];
@@ -247,6 +281,8 @@ const POSMDeploymentMatrix = () => {
           'Store',
           'Region',
           'Channel',
+          'Leader',
+          'TDS',
           'Models',
           'Completion',
           ...models
@@ -258,6 +294,8 @@ const POSMDeploymentMatrix = () => {
             `"${row.storeName}"`,
             `"${row.region}"`,
             `"${row.channel}"`,
+            `"${row.leader}"`,
+            `"${row.TDS}"`,
             row.totalModels,
             `${row.completionRate}%`,
             ...models.map(model => {
@@ -422,6 +460,7 @@ const POSMDeploymentMatrix = () => {
           enableCellTextSelection={true}
           animateRows={true}
           loadingOverlayComponent="Loading..."
+          enableBrowserTooltips={true}
         />
       </div>
 
